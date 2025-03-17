@@ -174,6 +174,8 @@ def get_gemini_response(conversation_buffer, prompt, vectorstore=None):
         full_context = f"{base_context}\n{conversation_context}\n\nUser query: {prompt}"
 
     try:
+        # Ensure the model is correctly initialized
+        model = genai.GenerativeModel('gemini-2.0-flash')
         response = model.generate_content(full_context)
         if hasattr(response, 'text'):
             return response.text
@@ -184,6 +186,7 @@ def get_gemini_response(conversation_buffer, prompt, vectorstore=None):
     except Exception as e:
         st.error(f"An error occurred while generating the response: {str(e)}")
         return "I'm sorry, I encountered an error. Could you please try again or rephrase your question?"
+
 
 def export_conversation_to_pdf():
     buffer = BytesIO()
