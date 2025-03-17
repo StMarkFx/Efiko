@@ -42,7 +42,7 @@ gemini_api_key = st.secrets["gemini"]["api_key"]
 
 # Configure the Gemini API
 genai.configure(api_key=gemini_api_key)
-model = genai.GenerativeModel('gemini-pro')
+model = genai.GenerativeModel('gemini-2.0-flash')
 
 # Initialize HuggingFace embeddings
 embeddings = HuggingFaceEmbeddings()
