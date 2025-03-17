@@ -191,7 +191,7 @@ def safe_get_gemini_response(conversation_buffer, prompt, vectorstore=None):
         st.error(f"An error occurred: {str(e)}. Please try again.")
         return "I'm sorry, I encountered an error. Could you please rephrase your question?"
 
-def get_gemini_response(conversation_buffer, prompt, vectorstore=None):
+def get_gemini_response(conversation_buffer, prompt, vectorstore=None, study_profile=None):
     base_context = """You are Efiko, an enthusiastic and knowledgeable AI study companion. Your goal is to inspire curiosity and a love for learning in students of all ages and backgrounds. When interacting with users:
 
     1. Be proactive and engaging. If a query is vague, offer a range of exciting topics or suggest a learning path based on current events or interdisciplinary connections.
@@ -204,22 +204,79 @@ def get_gemini_response(conversation_buffer, prompt, vectorstore=None):
     8. If you don't have specific information, guide the user towards reliable resources or suggest how they might research the topic further.
 
     Remember, your role is not just to provide information, but to inspire a journey of discovery and lifelong learning.
-
-    Previous conversation:
     """
+
+    # Add user profile information if available
+    if study_profile:
+        profile_context = f"""
+        User Information:
+        - Preferred difficulty level: {study_profile.preference_difficulty}
+        - Learning style: {study_profile.learning_style}
+        - Top studied topics: {', '.join([topic[0] for topic in study_profile.get_top_topics()])}
+        - Study time: {study_profile.get_study_stats()['total_time']} minutes
+        
+        Tailor your response to match the user's preferred difficulty level and learning style.
+        For {study_profile.learning_style} learners, emphasize {'visual analogies and diagrams' if study_profile.learning_style == 'visual' 
+                                            else 'spoken explanations and discussions' if study_profile.learning_style == 'auditory'
+                                            else 'written explanations and examples' if study_profile.learning_style == 'reading'
+                                            else 'practical, hands-on examples and activities'}.
+        """
+        base_context += profile_context
+    
     conversation_context = conversation_buffer.get_context()
     
+    # Enhanced document search with metadata
     if vectorstore:
-        relevant_docs = vectorstore.similarity_search(prompt, k=2)
-        doc_context = "\n".join([doc.page_content for doc in relevant_docs])
-        full_context = f"{base_context}\n{conversation_context}\n\nRelevant document content:\n{doc_context}\n\nUser query: {prompt}"
+        try:
+            # First attempt: Direct search on user query
+            relevant_docs = vectorstore.similarity_search(prompt, k=3)
+            
+            # Second attempt: If results are weak, try with expanded query
+            if len(relevant_docs) < 2:
+                # Extract key terms and create expanded query
+                key_terms = extract_topics_from_message(prompt)
+                expanded_query = prompt + " " + " ".join(key_terms)
+                relevant_docs = vectorstore.similarity_search(expanded_query, k=3)
+            
+            # Format document context with citations
+            doc_context = ""
+            for i, doc in enumerate(relevant_docs):
+                doc_context += f"\nDocument section {i+1}:\n{doc.page_content}\n"
+                
+            # Add metadata if available
+            if hasattr(vectorstore, 'metadata') and vectorstore.metadata:
+                doc_context += f"\nSource: {vectorstore.metadata.get('filename', 'Uploaded document')}"
+                
+            full_context = f"{base_context}\n{conversation_context}\n\nRelevant document content:\n{doc_context}\n\nUser query: {prompt}"
+        except Exception as e:
+            st.warning(f"Document search failed: {str(e)}")
+            full_context = f"{base_context}\n{conversation_context}\n\nUser query: {prompt}"
     else:
         full_context = f"{base_context}\n{conversation_context}\n\nUser query: {prompt}"
 
     try:
-        # Ensure the model is correctly initialized
+        # Ensure the model is correctly initialized with safety settings
         model = genai.GenerativeModel('gemini-2.0-flash')
-        response = model.generate_content(full_context)
+        
+        # Add structured response formatting for certain types of queries
+        if any(keyword in prompt.lower() for keyword in ["summarize", "summary", "explain", "explain to me", "break down"]):
+            full_context += "\n\nPlease structure your response with clear headings and bullet points when appropriate."
+        
+        # Add study tips for questions asking how to learn/study
+        if any(keyword in prompt.lower() for keyword in ["how to study", "how to learn", "study tips", "study method", "memorize"]):
+            full_context += "\n\nInclude practical study tips and memory techniques in your response."
+        
+        # Generate response with enhanced parameters
+        response = model.generate_content(
+            full_context,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.7,
+                top_p=0.95,
+                top_k=40,
+                max_output_tokens=800,
+            )
+        )
+        
         if hasattr(response, 'text'):
             return response.text
         elif hasattr(response, 'parts'):
@@ -229,7 +286,6 @@ def get_gemini_response(conversation_buffer, prompt, vectorstore=None):
     except Exception as e:
         st.error(f"An error occurred while generating the response: {str(e)}")
         return "I'm sorry, I encountered an error. Could you please try again or rephrase your question?"
-
 
 def export_conversation_to_pdf():
     buffer = BytesIO()
