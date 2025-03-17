@@ -421,5 +421,235 @@ def cleanup_old_vectorstores(max_age_days=2):
 
 # Call this function periodically, e.g., once a day or once a week
 
+
+def create_flashcards(text, num_cards=5):
+    """Generate flashcards from document text"""
+    flashcard_prompt = f"""
+    Create {num_cards} educational flashcards from the following text. 
+    For each flashcard, generate a question on one side and the answer on the other.
+    Format as a JSON array of objects with 'question' and 'answer' fields.
+    
+    Text: {text[:5000]}  # Limit text length
+    
+    JSON format: [{"question": "Question 1?", "answer": "Answer 1"}, ...]
+    """
+    
+    try:
+        model = genai.GenerativeModel('gemini-2.0-flash')
+        response = model.generate_content(flashcard_prompt)
+        response_text = response.text
+        
+        # Extract JSON content
+        import json
+        import re
+        
+        # Find JSON content (between square brackets)
+        json_match = re.search(r'\[.*\]', response_text, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(0)
+            flashcards = json.loads(json_str)
+            return flashcards
+        else:
+            return []
+    except Exception as e:
+        st.error(f"Error creating flashcards: {str(e)}")
+        return []
+
+def generate_quiz(text, num_questions=5):
+    """Generate a quiz from document text"""
+    quiz_prompt = f"""
+    Create a {num_questions}-question multiple-choice quiz based on the following text.
+    For each question, provide 4 options with one correct answer clearly marked.
+    Format as a JSON array of objects with 'question', 'options' (array), and 'correct_index' fields.
+    
+    Text: {text[:5000]}  # Limit text length
+    
+    JSON format example: 
+    [
+      {{
+        "question": "What is the capital of France?",
+        "options": ["Berlin", "Madrid", "Paris", "Rome"],
+        "correct_index": 2
+      }}
+    ]
+    """
+    
+    try:
+        model = genai.GenerativeModel('gemini-2.0-flash')
+        response = model.generate_content(quiz_prompt)
+        response_text = response.text
+        
+        # Extract JSON content
+        import json
+        import re
+        
+        # Find JSON content (between square brackets)
+        json_match = re.search(r'\[.*\]', response_text, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(0)
+            quiz = json.loads(json_str)
+            return quiz
+        else:
+            return []
+    except Exception as e:
+        st.error(f"Error generating quiz: {str(e)}")
+        return []
+
+def summarize_document(text):
+    """Generate a summary of the document"""
+    summary_prompt = f"""
+    Create a comprehensive summary of the following text. 
+    Include the main topics, key points, and important concepts.
+    Organize the summary with clear headings and bullet points.
+    
+    Text: {text[:7000]}  # Limit text length
+    """
+    
+    try:
+        model = genai.GenerativeModel('gemini-2.0-flash')
+        response = model.generate_content(summary_prompt)
+        return response.text
+    except Exception as e:
+        st.error(f"Error generating summary: {str(e)}")
+        return "Could not generate summary."
+
+
+#Study Tools Features
+def study_tools_tab():
+    """Create a study tools interface tab"""
+    st.header("Study Tools")
+    
+    if "vectorstore" not in st.session_state or st.session_state.vectorstore is None:
+        st.info("Please upload a document first to use study tools.")
+        return
+    
+    # Get document text
+    try:
+        vectorstore = st.session_state.vectorstore
+        # Get a sample of document chunks for tools
+        sample_docs = vectorstore.similarity_search("important concepts", k=10)
+        doc_text = "\n\n".join([doc.page_content for doc in sample_docs])
+        
+        # Tool selection
+        tool = st.selectbox(
+            "Select Study Tool",
+            ["Document Summary", "Flashcards", "Practice Quiz"]
+        )
+        
+        if tool == "Document Summary":
+            if st.button("Generate Summary"):
+                with st.spinner("Generating document summary..."):
+                    summary = summarize_document(doc_text)
+                    st.markdown(summary)
+                    
+                    # Add download option
+                    from io import StringIO
+                    summary_buffer = StringIO()
+                    summary_buffer.write(summary)
+                    st.download_button(
+                        label="Download Summary",
+                        data=summary_buffer.getvalue(),
+                        file_name="document_summary.txt",
+                        mime="text/plain"
+                    )
+        
+        elif tool == "Flashcards":
+            num_cards = st.slider("Number of Flashcards", 5, 20, 10)
+            if st.button("Generate Flashcards"):
+                with st.spinner("Creating flashcards..."):
+                    flashcards = create_flashcards(doc_text, num_cards)
+                    
+                    if flashcards:
+                        # Display flashcards in a carousel-like interface
+                        selected_card = st.session_state.get("selected_card", 0)
+                        col1, col2, col3 = st.columns([1, 10, 1])
+                        
+                        with col1:
+                            if st.button("◀️", key="prev_card") and selected_card > 0:
+                                st.session_state.selected_card = selected_card - 1
+                                st.experimental_rerun()
+                        
+                        with col3:
+                            if st.button("▶️", key="next_card") and selected_card < len(flashcards) - 1:
+                                st.session_state.selected_card = selected_card + 1
+                                st.experimental_rerun()
+                        
+                        # Display current flashcard
+                        current_card = flashcards[st.session_state.get("selected_card", 0)]
+                        with col2:
+                            with st.container():
+                                st.subheader(f"Flashcard {selected_card + 1}/{len(flashcards)}")
+                                show_answer = st.checkbox("Show Answer", key=f"show_answer_{selected_card}")
+                                st.info(current_card["question"])
+                                if show_answer:
+                                    st.success(current_card["answer"])
+                    else:
+                        st.warning("Could not generate flashcards. Please try again.")
+        
+        elif tool == "Practice Quiz":
+            num_questions = st.slider("Number of Questions", 3, 10, 5)
+            if st.button("Generate Quiz"):
+                with st.spinner("Creating quiz..."):
+                    quiz = generate_quiz(doc_text, num_questions)
+                    
+                    if quiz:
+                        # Initialize session state for quiz
+                        if "quiz_answers" not in st.session_state:
+                            st.session_state.quiz_answers = [-1] * len(quiz)
+                            st.session_state.show_results = False
+                        
+                        # Display quiz
+                        for i, question in enumerate(quiz):
+                            st.subheader(f"Question {i+1}")
+                            st.write(question["question"])
+                            
+                            # Radio buttons for options
+                            selected = st.radio(
+                                "Select your answer:",
+                                question["options"],
+                                key=f"q_{i}"
+                            )
+                            
+                            # Store selected answer index
+                            if selected:
+                                st.session_state.quiz_answers[i] = question["options"].index(selected)
+                            
+                            st.markdown("---")
+                        
+                        # Submit button
+                        if st.button("Submit Quiz"):
+                            st.session_state.show_results = True
+                        
+                        # Show results
+                        if st.session_state.show_results:
+                            score = 0
+                            for i, question in enumerate(quiz):
+                                user_answer = st.session_state.quiz_answers[i]
+                                correct = question["correct_index"]
+                                
+                                if user_answer == correct:
+                                    score += 1
+                                    st.success(f"Question {i+1}: Correct! ✓")
+                                else:
+                                    st.error(f"Question {i+1}: Incorrect ✗")
+                                    st.info(f"Correct answer: {question['options'][correct]}")
+                            
+                            # Display final score
+                            percentage = (score / len(quiz)) * 100
+                            st.subheader(f"Your Score: {score}/{len(quiz)} ({percentage:.1f}%)")
+                            
+                            # Reset button
+                            if st.button("Try Again"):
+                                st.session_state.quiz_answers = [-1] * len(quiz)
+                                st.session_state.show_results = False
+                                st.experimental_rerun()
+                    else:
+                        st.warning("Could not generate quiz. Please try again.")
+                        
+    except Exception as e:
+        st.error(f"Error loading document content: {str(e)}")
+
+
+
 if __name__ == "__main__":
     chat_interface()
