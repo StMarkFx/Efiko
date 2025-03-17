@@ -50,6 +50,7 @@ embeddings = HuggingFaceEmbeddings()
 def get_current_time():
     return datetime.now().strftime("%H:%M")
 
+
 def process_document(file):
     MAX_FILE_SIZE = 15 * 1024 * 1024  # 15 MB limit
     if file.size > MAX_FILE_SIZE:
@@ -59,46 +60,87 @@ def process_document(file):
     temp_file_path = None
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.name)[1]) as temp_file:
-            # Read and write the file in chunks
-            chunk_size = 3 *1024 * 1024  # 3 MB chunks
+            # Show progress bar for file upload
+            progress_bar = st.progress(0)
+            chunk_size = 3 * 1024 * 1024  # 3 MB chunks
+            total_size = file.size
+            bytes_read = 0
+            
             while True:
                 chunk = file.read(chunk_size)
                 if not chunk:
                     break
                 temp_file.write(chunk)
+                bytes_read += len(chunk)
+                progress_bar.progress(min(bytes_read / total_size, 1.0))
+            
             temp_file_path = temp_file.name
+            progress_bar.empty()  # Remove progress bar after completion
 
-        if file.name.endswith('.pdf'):
+        # Process different file types
+        st.info(f"Processing {file.name}...")
+        
+        if file.name.lower().endswith('.pdf'):
             texts = process_pdf(temp_file_path)
-        elif file.name.endswith('.docx'):
+        elif file.name.lower().endswith('.docx'):
             loader = UnstructuredFileLoader(temp_file_path)
             documents = loader.load()
             texts = [doc.page_content for doc in documents]
-        elif file.name.endswith('.txt'):
-            with open(temp_file_path, 'r') as f:
+        elif file.name.lower().endswith('.txt'):
+            with open(temp_file_path, 'r', encoding='utf-8', errors='replace') as f:
                 texts = f.readlines()
         else:
             st.error("Unsupported file format. Please upload a PDF, DOCX, or TXT file.")
             return None
 
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-        split_texts = text_splitter.split_text('\n'.join(texts))
+        # Improved text splitting with semantic units
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000, 
+            chunk_overlap=200,
+            separators=["\n\n", "\n", ". ", " ", ""]  # Prioritize splitting at paragraph and sentence boundaries
+        )
         
-        # Create FAISS index in batches
+        combined_text = '\n'.join(texts)
+        total_chars = len(combined_text)
+        
+        # Show progress during text splitting
+        with st.spinner("Splitting text into chunks..."):
+            split_texts = text_splitter.split_text(combined_text)
+        
+        st.info(f"Created {len(split_texts)} text chunks for processing")
+        
+        # Create FAISS index with progress tracking
         vectorstore = None
-        batch_size = 1000
+        batch_size = 500  # Smaller batch size for more frequent updates
+        progress_bar = st.progress(0)
+        
         for i in range(0, len(split_texts), batch_size):
             batch = split_texts[i:i+batch_size]
             if vectorstore is None:
                 vectorstore = FAISS.from_texts(batch, embeddings)
             else:
                 vectorstore.add_texts(batch)
+            
+            # Update progress
+            progress = min((i + batch_size) / len(split_texts), 1.0)
+            progress_bar.progress(progress)
+            
+        progress_bar.empty()
+        
+        # Store metadata with the vectorstore
+        vectorstore.metadata = {
+            "filename": file.name,
+            "date_processed": datetime.now().isoformat(),
+            "chunk_count": len(split_texts),
+            "total_chars": total_chars
+        }
         
         return vectorstore
+        
     except ImportError as e:
-        st.error("Error: Missing dependencies for processing this file type.")
+        st.error(f"Error: Missing dependencies for processing this file type. {str(e)}")
         st.info("Please install the required packages by running:")
-        st.code("pip install pypdf faiss-cpu")
+        st.code("pip install pypdf faiss-cpu unstructured")
         return None
     except Exception as e:
         st.error(f"An error occurred while processing the document: {str(e)}")
@@ -109,6 +151,7 @@ def process_document(file):
                 os.unlink(temp_file_path)
             except Exception as e:
                 st.warning(f"Could not remove temporary file: {str(e)}")
+
 
 def process_pdf(file_path):
     texts = []
