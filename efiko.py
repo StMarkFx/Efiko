@@ -398,7 +398,7 @@ def chat_interface():
 
     # React to user input
     if prompt := st.chat_input("Ask Efiko about any subject..."):
-        st.chat_message("user").markdown(f"{prompt} - {get_current_time()}")
+        st.chat_message("user").markdown(f"{prompt}")
         st.session_state.messages.append({"role": "user", "content": prompt})
         st.session_state.conversation_buffer.add_message("user", prompt)
 
@@ -406,7 +406,7 @@ def chat_interface():
             vectorstore = st.session_state.vectorstore
             response = get_gemini_response(st.session_state.conversation_buffer, prompt, vectorstore)
 
-        st.chat_message("assistant").markdown(f"{response} - {get_current_time()}")
+        st.chat_message("assistant").markdown(f"{response}")
         st.session_state.messages.append({"role": "assistant", "content": response})
         st.session_state.conversation_buffer.add_message("assistant", response)
 
