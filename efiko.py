@@ -399,7 +399,7 @@ def chat_interface():
     # React to user input
     if prompt := st.chat_input("Ask Efiko about any subject..."):
         st.chat_message("user").markdown(f"{prompt} - {get_current_time()}")
-        st.session_state.messages.append({"role": "user", "content": prompt, "time": get_current_time()})
+        st.session_state.messages.append({"role": "user", "content": prompt})
         st.session_state.conversation_buffer.add_message("user", prompt)
 
         with st.spinner("Efiko is thinking..."):
@@ -407,7 +407,7 @@ def chat_interface():
             response = get_gemini_response(st.session_state.conversation_buffer, prompt, vectorstore)
 
         st.chat_message("assistant").markdown(f"{response} - {get_current_time()}")
-        st.session_state.messages.append({"role": "assistant", "content": response, "time": get_current_time()})
+        st.session_state.messages.append({"role": "assistant", "content": response})
         st.session_state.conversation_buffer.add_message("assistant", response)
 
 def cleanup_old_vectorstores(max_age_days=2):
